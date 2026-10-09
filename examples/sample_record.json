@@ -1,0 +1,11 @@
+[
+  {
+    "id": "sample_0001",
+    "text": "Met Emilia at Comic-Con! So cool!",
+    "image_paths": ["img1.jpg", "img2.jpg", "img3.jpg"],
+    "gold_entities": [
+      {"token_start": 1, "token_end": 2, "type": "PER"},
+      {"token_start": 3, "token_end": 4, "type": "MISC"}
+    ]
+  }
+]
