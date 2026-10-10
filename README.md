@@ -257,7 +257,3 @@ Regression checks can be run after installing the dependencies:
 python -B -m unittest discover -s tests -v
 python -B scripts/check_release.py
 ```
-
-## License
-
-No license has been selected yet. A license will be added after the code and accompanying assets have been reviewed. Public visibility alone does not grant an open-source license.
