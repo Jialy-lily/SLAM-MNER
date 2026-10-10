@@ -1,6 +1,7 @@
 import json
 import os
 import random
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 import torch
@@ -46,6 +47,22 @@ def build_spans(gold_entities: List[Dict[str, Any]]) -> List[Tuple[int, int, int
         if s < e:
             spans.append((s, e, t))
     return spans
+
+
+def build_complete_word_token_maps(
+    word_ids: List[Optional[int]], full_word_ids: List[Optional[int]]
+) -> Tuple[Dict[int, int], Dict[int, int]]:
+    """Map only words whose complete subword sequence survives truncation."""
+    retained_counts = Counter(wid for wid in word_ids if wid is not None)
+    full_counts = Counter(wid for wid in full_word_ids if wid is not None)
+    word_to_token_start = {}
+    word_to_token_end = {}
+    for token_idx, wid in enumerate(word_ids):
+        if wid is None or retained_counts[wid] != full_counts[wid]:
+            continue
+        word_to_token_start.setdefault(wid, token_idx)
+        word_to_token_end[wid] = token_idx
+    return word_to_token_start, word_to_token_end
 
 
 def build_limited_supervision_subset(samples: List[Dict[str, Any]], ratio: float, seed: int = 42) -> List[int]:
@@ -121,19 +138,24 @@ class MNERConvertedDataset(Dataset):
         )
 
         word_ids = encoding.word_ids(batch_index=0)
+        full_encoding = self.tokenizer(
+            words,
+            is_split_into_words=True,
+            truncation=False,
+            padding=False,
+            return_attention_mask=False,
+        )
+        word_to_token_start, word_to_token_end = build_complete_word_token_maps(
+            word_ids, full_encoding.word_ids(batch_index=0)
+        )
         token_boundary_labels = []
         token_first_mask = []
-        word_to_token_start = {}
-        word_to_token_end = {}
         prev_wid = None
         for token_idx, wid in enumerate(word_ids):
             if wid is None:
                 token_boundary_labels.append(-100)
                 token_first_mask.append(0)
                 continue
-            if wid not in word_to_token_start:
-                word_to_token_start[wid] = token_idx
-            word_to_token_end[wid] = token_idx
             if wid != prev_wid:
                 token_boundary_labels.append(boundary_word_labels[wid])
                 token_first_mask.append(1)

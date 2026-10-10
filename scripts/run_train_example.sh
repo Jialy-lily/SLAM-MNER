@@ -9,5 +9,6 @@ python train.py \
   --batch_size 4 \
   --epochs 10 \
   --lr 3e-5 \
+  --seed 42 \
   --lambda_mask 0.2 \
   --freeze_vision

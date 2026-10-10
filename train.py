@@ -30,6 +30,12 @@ def build_parser():
     parser.add_argument("--pooled_hw", type=int, default=4)
     parser.add_argument("--low_resource_ratio", type=float, default=1.0)
     parser.add_argument("--freeze_vision", action="store_true")
+    parser.add_argument(
+        "--no_slot_induction",
+        dest="use_slot_induction",
+        action="store_false",
+        help="Use mean pooling over valid evidence instead of recurrent slots (paper Section 4.5).",
+    )
     parser.add_argument("--lambda_type", type=float, default=1.0)
     parser.add_argument("--lambda_aux", type=float, default=0.2)
     parser.add_argument("--lambda_mask", type=float, default=0.2)
@@ -86,6 +92,7 @@ def main():
         slot_iters=args.slot_iters,
         pooled_hw=args.pooled_hw,
         freeze_vision=args.freeze_vision,
+        use_slot_induction=args.use_slot_induction,
     ).to(device)
 
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=args.weight_decay)
@@ -111,7 +118,9 @@ def main():
         print(
             f"Epoch {epoch:02d} | train_loss={train_loss:.4f} | "
             f"val_f1={val_metrics['f1']:.4f} | val_p={val_metrics['precision']:.4f} | "
-            f"val_r={val_metrics['recall']:.4f} | val_bacc={val_metrics['boundary_acc']:.4f}"
+            f"val_r={val_metrics['recall']:.4f} | val_bacc={val_metrics['boundary_acc']:.4f} | "
+            f"val_bspan_f1={val_metrics['boundary_span_f1']:.4f} | "
+            f"val_oracle_typing_acc={val_metrics['oracle_typing_acc']:.4f}"
         )
         if val_metrics["f1"] > best_f1:
             best_f1 = val_metrics["f1"]
