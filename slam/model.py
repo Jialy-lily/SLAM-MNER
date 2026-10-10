@@ -101,9 +101,11 @@ class LatentSlotMNER(nn.Module):
         slot_iters: int = 3,
         pooled_hw: int = 4,
         freeze_vision: bool = True,
+        use_slot_induction: bool = True,
     ):
         super().__init__()
         self.num_slots = num_slots
+        self.use_slot_induction = use_slot_induction
         self.text_encoder = AutoModel.from_pretrained(text_name, use_safetensors=False)
         self.text_proj = nn.Linear(self.text_encoder.config.hidden_size, hidden_size)
         self.image_encoder = MultiImageAtomEncoder(vision_name, hidden_size, pooled_hw=pooled_hw)
@@ -142,6 +144,17 @@ class LatentSlotMNER(nn.Module):
         return atoms, atom_mask
 
     def induce_slots(self, atoms, atom_mask):
+        if not self.use_slot_induction:
+            # Paper Section 4.5: every mention uses the same mean-pooled
+            # context over valid text and image evidence atoms. Repeating the
+            # context preserves the remaining classification/loss interfaces;
+            # slot positional embeddings must not differentiate these copies.
+            weights = atom_mask.to(dtype=atoms.dtype)
+            weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
+            global_context = torch.einsum("bn,bnd->bd", weights, atoms)
+            slots = global_context.unsqueeze(1).expand(-1, self.num_slots, -1)
+            slot_to_atom_attn = weights.unsqueeze(1).expand(-1, self.num_slots, -1)
+            return slots, slot_to_atom_attn
         slots, slot_to_atom_attn = self.slot_attention(atoms, atom_mask)
         slots = slots + self.slot_pos_embed[:, : slots.size(1)]
         return slots, slot_to_atom_attn

@@ -5,7 +5,7 @@ import torch
 
 from slam.data import MNERConvertedDataset, make_loader
 from slam.model import LatentSlotMNER, LossComputer, LossConfig
-from slam.utils import evaluate
+from slam.utils import evaluate, set_seed
 
 
 def build_parser():
@@ -23,6 +23,10 @@ def build_parser():
     parser.add_argument("--num_slots", type=int, default=8)
     parser.add_argument("--slot_iters", type=int, default=3)
     parser.add_argument("--pooled_hw", type=int, default=4)
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="Slot-sampling seed; defaults to the checkpoint training seed, or 42.",
+    )
     return parser
 
 
@@ -31,6 +35,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt = torch.load(args.ckpt, map_location="cpu")
     train_args = ckpt.get("args", {})
+    eval_seed = args.seed if args.seed is not None else train_args.get("seed", 42)
 
     model = LatentSlotMNER(
         text_name=train_args.get("text_model", args.text_model),
@@ -40,6 +45,7 @@ def main():
         slot_iters=train_args.get("slot_iters", args.slot_iters),
         pooled_hw=train_args.get("pooled_hw", args.pooled_hw),
         freeze_vision=train_args.get("freeze_vision", True),
+        use_slot_induction=train_args.get("use_slot_induction", True),
     ).to(device)
     model.load_state_dict(ckpt["model_state"], strict=True)
 
@@ -64,7 +70,11 @@ def main():
             slot_masking_margin=train_args.get("slot_masking_margin", 0.15),
         ),
     )
+    # Reset after initialization so encoder construction cannot consume the
+    # random stream used for stochastic Gaussian slot sampling.
+    set_seed(eval_seed)
     metrics = evaluate(model, test_loader, loss_computer, device, save_predictions=args.save_predictions)
+    metrics["seed"] = eval_seed
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
 

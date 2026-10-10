@@ -104,6 +104,21 @@ def boundary_accuracy(boundary_logits, boundary_labels):
     return correct, total
 
 
+def oracle_typing_accuracy(model_out):
+    """Micro typing accuracy on gold spans retained by the text encoder.
+
+    The model's span pack contains the gold spans that can be represented
+    after truncation. Predicted boundaries are not involved (paper Table 4).
+    """
+    type_logits = model_out["type_logits"]
+    span_pack = model_out["span_pack"]
+    if type_logits is None or span_pack is None:
+        return 0, 0
+    gold_types = span_pack["span_types"]
+    correct = type_logits.argmax(dim=-1).eq(gold_types).sum().item()
+    return correct, gold_types.numel()
+
+
 def train_one_epoch(model, loader, optimizer, loss_computer, device):
     model.train()
     total_loss = 0.0
@@ -126,6 +141,8 @@ def evaluate(model, loader, loss_computer, device, save_predictions: str = None)
     model.eval()
     total_tp = total_fp = total_fn = 0
     total_b_correct = total_b_total = 0
+    total_b_span_tp = total_b_span_fp = total_b_span_fn = 0
+    total_oracle_correct = total_oracle_total = 0
     total_loss = 0.0
     steps = 0
     pred_dump = []
@@ -140,6 +157,9 @@ def evaluate(model, loader, loss_computer, device, save_predictions: str = None)
         corr, tot = boundary_accuracy(out["boundary_logits"], batch["boundary_labels"])
         total_b_correct += corr
         total_b_total += tot
+        oracle_correct, oracle_total = oracle_typing_accuracy(out)
+        total_oracle_correct += oracle_correct
+        total_oracle_total += oracle_total
 
         word_boundary_preds = decode_word_boundary_preds(out["boundary_logits"], batch["token_first_mask"], batch["words"])
         pred_spans = decode_spans_from_boundary(word_boundary_preds)
@@ -147,6 +167,14 @@ def evaluate(model, loader, loss_computer, device, save_predictions: str = None)
 
         for i in range(len(batch["ids"])):
             gold = [(s, e, t) for (s, e, t) in batch["spans"][i]]
+            # Boundary span F1 uses decoded spans before entity typing and
+            # ignores the entity type (paper Section 4.4). Full gold spans
+            # remain the denominator, including those beyond truncation.
+            gold_spans = [(s, e) for s, e, _ in gold]
+            _, _, _, b_tp, b_fp, b_fn = compute_entity_metrics(pred_spans[i], gold_spans)
+            total_b_span_tp += b_tp
+            total_b_span_fp += b_fp
+            total_b_span_fn += b_fn
             pred = [(s, e, t) for (s, e, t, _) in pred_entities[i]]
             _, _, _, tp, fp, fn = compute_entity_metrics(pred, gold)
             total_tp += tp
@@ -166,12 +194,20 @@ def evaluate(model, loader, loss_computer, device, save_predictions: str = None)
     precision = total_tp / (total_tp + total_fp + 1e-8)
     recall = total_tp / (total_tp + total_fn + 1e-8)
     f1 = 2 * precision * recall / (precision + recall + 1e-8)
+    boundary_span_precision = total_b_span_tp / max(total_b_span_tp + total_b_span_fp, 1)
+    boundary_span_recall = total_b_span_tp / max(total_b_span_tp + total_b_span_fn, 1)
+    boundary_span_f1 = 2 * total_b_span_tp / max(2 * total_b_span_tp + total_b_span_fp + total_b_span_fn, 1)
     metrics = {
         "loss": total_loss / max(steps, 1),
         "precision": precision,
         "recall": recall,
         "f1": f1,
         "boundary_acc": total_b_correct / max(total_b_total, 1),
+        "boundary_span_precision": boundary_span_precision,
+        "boundary_span_recall": boundary_span_recall,
+        "boundary_span_f1": boundary_span_f1,
+        "oracle_typing_acc": total_oracle_correct / max(total_oracle_total, 1),
+        "oracle_typing_total": total_oracle_total,
     }
     if save_predictions is not None:
         save_dir = os.path.dirname(save_predictions)
